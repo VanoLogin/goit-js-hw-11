@@ -1,119 +1,91 @@
 import './css/styles.css';
-import PixabayService from './pixabay';
+import 'simplelightbox/dist/simple-lightbox.min.css';
 
+import { Notify } from 'notiflix/build/notiflix-notify-aio';
+import smoothScroll from './helper/smoothScroll.js';
 import SimpleLightbox from 'simplelightbox';
 
-import 'simplelightbox/dist/simple-lightbox.min.css';
-import { Notify } from 'notiflix/build/notiflix-notify-aio';
-import smoothScroll from './smoothScroll';
+import * as pixabayService from './services/pixabayService.js';
+import appendCards from './templates/cardTemplate.js';
+import buttonService from './services/loadMoreService.js';
 
 const refs = {
   searchForm: document.querySelector('#search-form'),
   galleryContainer: document.querySelector('.gallery'),
   loadBtn: document.querySelector('.load-more'),
 };
-const lightbox = new SimpleLightbox('.gallery a', {
-  captionDelay: 250,
-});
 
-const pixabayService = new PixabayService();
+const queryParams = {
+  page: 1,
+  queryValue: '',
+  perPage: 40,
+};
 
-refs.searchForm.addEventListener('submit', onSearchForm);
-refs.loadBtn.addEventListener('click', onLoadMoreBtn);
+const lightbox = new SimpleLightbox('.photo-card a');
 
-refs.loadBtn.classList.add('hidden');
+refs.searchForm.addEventListener('submit', handleSubmit);
 
-function onSearchForm(evt) {
-  evt.preventDefault();
-  clearContainer();
-  pixabayService.searchQuery = evt.currentTarget.elements.searchQuery.value;
+function handleSubmit(event) {
+  event.preventDefault();
+  refs.galleryContainer.innerHTML = '';
+  buttonService.hide();
+  queryParams.page = 1;
+  queryParams.queryValue =
+    event.currentTarget.elements.searchQuery.value.trim();
 
-  if (pixabayService.searchQuery === '') {
-    refs.loadBtn.classList.add('hidden');
-    Notify.failure(`Please, enter your request`);
-    return;
-  }
-  
-  pixabayService.resetPage();
-
-  pixabayService.axiosArticales().then(renderGallery);
-
-  
-  
+  fetchPictures()
+    .then(data => {
+      if (!data) {
+        throw new Error('no data');
+      }
+      Notify.info(`Hooray! We found ${data.totalHits} images.`);
+      buttonService.show();
+      refs.loadBtn.addEventListener('click', handleLoadMore);
+    })
+    .catch(err => console.log(err))
+    .finally(() => {
+      refs.searchForm.reset();
+    });
 }
 
-function onLoadMoreBtn() {
-  pixabayService.axiosArticales().then(renderGallery);
-  
+function handleLoadMore() {
+  buttonService.disable();
+  queryParams.page += 1;
+
+  fetchPictures().then(buttonService.enable);
 }
 
-function renderGallery(data) {
-  
-    const allPages = Math.ceil(data.totalHits / pixabayService.per_page);
-    console.log(pixabayService.page);
+async function fetchPictures() {
+  try {
+    const { data } = await pixabayService.getPictures(queryParams);
+    const allPages = Math.ceil(data.totalHits / queryParams.perPage);
     console.log(allPages);
-    const markupGallery = createGalleryCard(data.hits);
-    pixabayService.incrementPage();
-    if (data.totalHits === 0) {
-      refs.loadBtn.classList.add('hidden');
-      Notify.failure(
-        `Sorry, there are no images matching your search query. Please try again.`
+    console.log(data);
+    if (data.hits.length === 0) {
+      throw new Error(
+        'Sorry, there are no images matching your search query. Please try again.'
       );
-    } else if (pixabayService.page === allPages) {
-      refs.loadBtn.classList.add('hidden');
-      Notify.info(`Hooray! We found ${data.totalHits} images.`);
-      Notify.failure(`We're sorry, but you've reached the end of search results.`);
-
-      
-    } else if (pixabayService.page - 1 === 1 && data.hits.length > 1) {
-      Notify.info(`Hooray! We found ${data.totalHits} images.`);
     }
 
-    refs.galleryContainer.insertAdjacentHTML('beforeend', markupGallery);
-    refs.loadBtn.classList.remove('hidden');
-    
-
+    appendCards(data.hits, refs.galleryContainer);
     lightbox.refresh();
 
-    smoothScroll();
-  } 
+    if (data.totalHits <= queryParams.perPage) {
+      Notify.info(`Hooray! We found ${data.totalHits} images.`);
 
+      throw new Error(
+        "We're sorry, but you've reached the end of search results."
+      );
+    } else if (queryParams.page >= allPages) {
+      throw new Error(
+        "We're sorry, but you've reached the end of search results."
+      );
+    }
 
-function createGalleryCard(hits) {
-  console.log(hits);
-  return hits
-    .map(
-      ({
-        webformatURL,
-        largeImageURL,
-        tags,
-        likes,
-        views,
-        comments,
-        downloads,
-      }) => {
-        return `<div class="photo-card">
- <a class=photo-card__link href="${largeImageURL}"> <img src="${webformatURL}" alt="${tags}" loading="lazy" /></a>
-  <div class="info">
-    <p class="info-item">
-      <b>Likes</b>${likes}
-    </p>
-    <p class="info-item">
-      <b>Views</b>${views}
-    </p>
-    <p class="info-item">
-      <b>Comments</b>${comments}
-    </p>
-    <p class="info-item">
-      <b>Downloads</b>${downloads}
-    </p>
-  </div>
-</div>`;
-      }
-    )
-    .join('');
-}
-
-function clearContainer() {
-  refs.galleryContainer.innerHTML = ' ';
+    return data;
+  } catch (error) {
+    Notify.failure(error.message);
+    buttonService.hide();
+    return false;
+  }
 }
